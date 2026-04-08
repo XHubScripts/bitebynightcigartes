@@ -1,420 +1,158 @@
 local URL = "https://raw.githubusercontent.com/artxficial/matchastuff/main/esp_utility.lua"
-pcall(function()
+local ImportESP = pcall(function()
     loadstring(game:HttpGet(URL))()
 end)
 
-local Workspace = game:GetService("Workspace")
-local Players = game:GetService("Players")
+local PathToThings = game.Workspace.IGNORE
 
-local GeneratorColor = Color3.fromRGB(120, 255, 120)
-local BatteryColor = Color3.fromRGB(220, 232, 93)
-local TrapColor = Color3.fromRGB(232, 102, 100)
-local MinionColor = Color3.fromRGB(130, 55, 55)
-local KillerColor = Color3.fromRGB(255, 150, 150)
-
-local CompletedGenerators = {}
-local GeneratorTrackers = {}
-local GeneratorBoundsParts = {}
-local StaticTrackers = {
-    Killer = {},
-    Trap = {},
-    Battery = {},
-    Minion = {}
-}
-local CurrentMapRef = nil
-
-local function UIValue(key, default)
-    if UI and UI.GetValue then
-        local ok, value = pcall(function()
-            return UI.GetValue(key)
-        end)
-        if ok and value ~= nil then
-            return value
-        end
-    end
-    return default
-end
-
-local function SetDrawingVisible(drawingObj, visible)
-    if drawingObj and drawingObj.Drawing then
-        drawingObj.Visible = visible
-        drawingObj.Drawing.Visible = visible
-    end
-end
-
-local function SetTrackerVisible(tracker, visible)
-    if not tracker or not tracker.Drawings then
-        return
+local function GetFilteredTable()
+    if not game.Workspace.MAPS["GAME MAP"] then
+        return {}
     end
 
-    for _, drawing in pairs(tracker.Drawings) do
-        SetDrawingVisible(drawing, visible)
-    end
-end
+    local PathToGenerators = game.Workspace.MAPS["GAME MAP"].Generators
 
-local function DestroyBoundsPart(generatorModel)
-    local part = GeneratorBoundsParts[generatorModel]
-    if part then
-        pcall(function()
-            part:Destroy()
-        end)
-        GeneratorBoundsParts[generatorModel] = nil
-    end
-end
-
-local function RemoveGeneratorTracker(generatorModel)
-    local tracker = GeneratorTrackers[generatorModel]
-    if tracker then
-        pcall(function()
-            tracker:Destroy()
-        end)
-        GeneratorTrackers[generatorModel] = nil
-    end
-
-    DestroyBoundsPart(generatorModel)
-end
-
-local function ResetRoundIfNeeded()
-    local mapsFolder = Workspace:FindFirstChild("MAPS")
-    local gameMap = mapsFolder and mapsFolder:FindFirstChild("GAME MAP")
-
-    if gameMap ~= CurrentMapRef then
-        CurrentMapRef = gameMap
-        CompletedGenerators = {}
-
-        for generatorModel in pairs(GeneratorTrackers) do
-            RemoveGeneratorTracker(generatorModel)
-        end
-    end
-end
-
-local function IsGeneratorComplete(generatorModel)
-    if not generatorModel or not generatorModel.Parent then
-        return false
-    end
-
-    local progress = generatorModel:GetAttribute("Progress") or 0
-    return progress >= 100
-end
-
-local function GetOrCreateGeneratorBoundsPart(generatorModel)
-    if not generatorModel or not generatorModel.Parent then
-        return nil
-    end
-
-    local boundPart = GeneratorBoundsParts[generatorModel]
-    if boundPart and boundPart.Parent then
-        local cf, size = generatorModel:GetBoundingBox()
-        boundPart.CFrame = cf
-        boundPart.Size = size + Vector3.new(1.6, 1.6, 1.6)
-        return boundPart
-    end
-
-    local cf, size = generatorModel:GetBoundingBox()
-    boundPart = Instance.new("Part")
-    boundPart.Name = "__GeneratorBounds"
-    boundPart.Anchored = true
-    boundPart.CanCollide = false
-    boundPart.CanTouch = false
-    boundPart.CanQuery = false
-    boundPart.Transparency = 1
-    boundPart.Size = size + Vector3.new(1.6, 1.6, 1.6)
-    boundPart.CFrame = cf
-    boundPart.Parent = Workspace
-
-    GeneratorBoundsParts[generatorModel] = boundPart
-    return boundPart
-end
-
-local function ApplyGeneratorStyle(tracker)
-    if not tracker or not tracker.Drawings then
-        return
-    end
-
-    tracker.Color = GeneratorColor
-    tracker.Name = ""
-
-    local square = tracker.Drawings.Square
-    if square and square.Drawing then
-        square.Drawing.Color = GeneratorColor
-        square.Drawing.Thickness = 2
-        square.Visible = true
-        square.Drawing.Visible = true
-    end
-
-    local distance = tracker.Drawings.Distance
-    if distance and distance.Drawing then
-        distance.Visible = false
-        distance.Drawing.Visible = false
-        distance.Function = function()
-            return ""
-        end
-    end
-
-    local name = tracker.Drawings.Name
-    if name and name.Drawing then
-        name.Visible = false
-        name.Drawing.Visible = false
-        name.Drawing.Text = ""
-    end
-
-    local progress = tracker.Drawings.Progress
-    if progress and progress.Drawing then
-        progress.Visible = true
-        progress.Drawing.Visible = true
-        progress.Drawing.Color = GeneratorColor
-        progress.Drawing.Center = true
-        progress.Drawing.Outline = true
-        progress.Drawing.Size = 13
-    end
-end
-
-local function EnsureGeneratorESP(generatorModel)
-    if not generatorModel or not generatorModel.Parent then
-        RemoveGeneratorTracker(generatorModel)
-        return
-    end
-
-    if IsGeneratorComplete(generatorModel) then
-        CompletedGenerators[generatorModel] = true
-        RemoveGeneratorTracker(generatorModel)
-        return
-    end
-
-    if CompletedGenerators[generatorModel] then
-        CompletedGenerators[generatorModel] = nil
-    end
-
-    local boundsPart = GetOrCreateGeneratorBoundsPart(generatorModel)
-    if not boundsPart or not boundsPart.Parent or not boundsPart.Address then
-        RemoveGeneratorTracker(generatorModel)
-        return
-    end
-
-    local tracker = GeneratorTrackers[generatorModel]
-    if not tracker then
-        local ok, newTracker = pcall(function()
-            return ESP_Utility.NewTracker(boundsPart, "", GeneratorColor)
-        end)
-
-        if not ok or not newTracker then
-            return
-        end
-
-        tracker = newTracker
-        GeneratorTrackers[generatorModel] = tracker
-
-        if not tracker.Drawings.Progress then
-            tracker:AddText("Progress", GeneratorColor, "Generator [0%]", function()
-                if not generatorModel or not generatorModel.Parent then
-                    RemoveGeneratorTracker(generatorModel)
-                    return ""
-                end
-
-                if IsGeneratorComplete(generatorModel) then
-                    CompletedGenerators[generatorModel] = true
-                    RemoveGeneratorTracker(generatorModel)
-                    return ""
-                end
-
-                local progress = generatorModel:GetAttribute("Progress") or 0
-                return string.format("Generator [%d%%]", progress)
-            end)
-        end
-    end
-
-    ApplyGeneratorStyle(tracker)
-    SetTrackerVisible(tracker, UIValue("esp_master", true) and UIValue("esp_generators", true))
-end
-
-local function UpdateGenerators()
-    ResetRoundIfNeeded()
-
-    local mapsFolder = Workspace:FindFirstChild("MAPS")
-    local gameMap = mapsFolder and mapsFolder:FindFirstChild("GAME MAP")
-    if not gameMap then
-        return
-    end
-
-    local generatorsFolder = gameMap:FindFirstChild("Generators")
-    if not generatorsFolder then
-        return
-    end
-
-    for _, generatorModel in ipairs(generatorsFolder:GetChildren()) do
-        EnsureGeneratorESP(generatorModel)
-    end
-
-    if not (UIValue("esp_master", true) and UIValue("esp_generators", true)) then
-        for generatorModel in pairs(GeneratorTrackers) do
-            RemoveGeneratorTracker(generatorModel)
-        end
-    end
-end
-
-local function GetKillerUsername(killerModel)
-    if not killerModel then
-        return "Killer"
-    end
-
-    local candidates = {
-        killerModel.Name,
-        killerModel:GetAttribute("Player"),
-        killerModel:GetAttribute("Username"),
-        killerModel:GetAttribute("DisplayName"),
-        killerModel:GetAttribute("Name")
+    local Categories = {
+        Generator = {
+            Color = Color3.fromRGB(170, 85, 255),
+            Objects = {},
+        },
+        Battery = {
+            Color = Color3.fromRGB(220, 232, 93),
+            Objects = {},
+        },
+        Trap = {
+            Color = Color3.fromRGB(232, 102, 100),
+            Objects = {},
+        },
+        Minion = {
+            Color = Color3.fromRGB(130, 55, 55),
+            Objects = {},
+        },
+        Killer = {
+            Color = Color3.fromRGB(255, 150, 150),
+            Objects = {},
+        },
     }
 
-    for _, value in ipairs(candidates) do
-        if type(value) == "string" and value ~= "" and value ~= "KILLER" and value ~= "killer" then
-            return value
+    for _, generatorModel in PathToGenerators:GetChildren() do
+        if generatorModel.PrimaryPart then
+            table.insert(Categories.Generator.Objects, generatorModel.PrimaryPart)
         end
     end
 
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player.Character == killerModel then
-            return player.Name
+    local KillerModel = game.Workspace.PLAYERS.KILLER:FindFirstChildWhichIsA("Model")
+    if KillerModel and KillerModel:FindFirstChild("Hitbox") then
+        table.insert(Categories.Killer.Objects, KillerModel.Hitbox)
+    end
+
+    local PotentialObjects = {}
+
+    for _, item in PathToThings:GetChildren() do
+        local IsTransparent = (item.Transparency == 1)
+        if IsTransparent then
+            continue
+        end
+
+        local ClassName = item.ClassName
+        local IsPart = (ClassName == "Part")
+        if IsPart then
+            continue
+        end
+
+        local IsMesh = (ClassName == "MeshPart") and (item.MeshId ~= "rbxassetid://131427085502355")
+        if IsMesh then
+            continue
+        end
+
+        table.insert(PotentialObjects, item)
+    end
+
+    for _, item in PotentialObjects do
+        local ValidChildren = {
+            ["Trap"] = "Trap",
+            ["Battery"] = "Joint",
+            ["Minion"] = "HumanoidRootPart",
+        }
+
+        for CategoryName, ChildToLookFor in ValidChildren do
+            local FoundChild = item:FindFirstChild(ChildToLookFor)
+            if FoundChild then
+                if ChildToLookFor == "HumanoidRootPart" then
+                    if #item:GetChildren() ~= 5 then
+                        continue
+                    end
+                end
+
+                local PrimaryPart = item.PrimaryPart
+                table.insert(Categories[CategoryName].Objects, PrimaryPart or item)
+            end
         end
     end
 
-    return killerModel.Name ~= "" and killerModel.Name or "Killer"
+    return Categories
 end
-
-local function AddOrUpdateStaticESP(instance, categoryName, color, customName, enabled)
-    if not instance or not instance.Parent or not instance.Address then
-        return
-    end
-
-    local bucket = StaticTrackers[categoryName]
-    if not bucket then
-        return
-    end
-
-    local tracker = bucket[instance]
-    if not tracker then
-        local ok, newTracker = pcall(function()
-            return ESP_Utility.NewTracker(instance, customName or categoryName, color)
-        end)
-
-        if not ok or not newTracker then
-            return
-        end
-
-        tracker = newTracker
-        bucket[instance] = tracker
-    end
-
-    tracker.Color = color
-    tracker.Name = customName or categoryName
-
-    if categoryName == "Killer" then
-        local name = tracker.Drawings and tracker.Drawings.Name
-        if name and name.Drawing then
-            name.Drawing.Color = color
-            name.Drawing.Text = customName or "Killer"
-            name.Visible = true
-            name.Drawing.Visible = enabled
-        end
-    end
-
-    SetTrackerVisible(tracker, enabled)
-end
-
-UI.AddTab("Bite By Night - Cigartes", function(tab)
-    local esp = tab:Section("Matcha ESP", "Right")
-
-    esp:Toggle("esp_master", "ESP Enabled", true)
-    local masterKb = esp:Keybind("esp_master_kb")
-    masterKb:AddToHotkey("ESP Master", "esp_master")
-
-    esp:Toggle("esp_generators", "Generators ESP", true)
-    esp:Toggle("esp_killer", "Killer ESP", true)
-    esp:Toggle("esp_traps", "Trap ESP", true)
-    esp:Toggle("esp_batteries", "Battery ESP", true)
-    esp:Toggle("esp_minions", "Minion ESP", true)
-
-    esp:Button("Reset ESP", function()
-        UI.SetValue("esp_master", true)
-        UI.SetValue("esp_generators", true)
-        UI.SetValue("esp_killer", true)
-        UI.SetValue("esp_traps", true)
-        UI.SetValue("esp_batteries", true)
-        UI.SetValue("esp_minions", true)
-    end)
-end)
 
 task.spawn(function()
     while true do
-        pcall(UpdateGenerators)
-        task.wait(0.2)
-    end
-end)
+        local Categories = GetFilteredTable()
 
-task.spawn(function()
-    while true do
-        pcall(function()
-            local master = UIValue("esp_master", true)
-
-            local playersFolder = Workspace:FindFirstChild("PLAYERS")
-            local killerFolder = playersFolder and playersFolder:FindFirstChild("KILLER")
-            local killerModel = killerFolder and killerFolder:FindFirstChildWhichIsA("Model")
-
-            if killerModel and killerModel:FindFirstChild("Hitbox") then
-                local killerName = GetKillerUsername(killerModel)
-                AddOrUpdateStaticESP(
-                    killerModel.Hitbox,
-                    "Killer",
-                    KillerColor,
-                    killerName,
-                    master and UIValue("esp_killer", true)
-                )
-            end
-
-            local pathToThings = Workspace:FindFirstChild("IGNORE")
-            if not pathToThings then
-                return
-            end
-
-            for _, item in ipairs(pathToThings:GetChildren()) do
-                if item:IsA("BasePart") and item.Transparency == 1 then
+        for CategoryName, Table in Categories do
+            for _, Instance in Table.Objects do
+                if not Instance or not Instance.Address then
                     continue
                 end
 
-                if item.ClassName == "Part" then
+                local DisplayName = CategoryName
+
+                if CategoryName == "Killer" and Instance.Parent then
+                    DisplayName = Instance.Parent.Name
+                end
+
+                if CategoryName == "Generator" then
+                    local genModel = Instance.Parent
+                    local progress = genModel and (genModel:GetAttribute("Progress") or 0) or 0
+                    local ExistingTracker = ESP_Utility.TrackersToUpdate[Instance.Address]
+
+                    if progress >= 100 then
+                        if ExistingTracker then
+                            ExistingTracker:Destroy()
+                        end
+                        continue
+                    end
+                end
+
+                local Tracker = ESP_Utility.NewTracker(Instance, DisplayName, Table.Color)
+                if not Tracker then
                     continue
                 end
 
-                if item.ClassName == "MeshPart" and item.MeshId ~= "rbxassetid://131427085502355" then
-                    continue
-                end
+                Tracker.Drawings.Square.Visible = true
 
-                if item:FindFirstChild("Trap") then
-                    AddOrUpdateStaticESP(
-                        item.PrimaryPart or item,
-                        "Trap",
-                        TrapColor,
-                        "Trap",
-                        master and UIValue("esp_traps", true)
-                    )
-                elseif item:FindFirstChild("Joint") then
-                    AddOrUpdateStaticESP(
-                        item.PrimaryPart or item,
-                        "Battery",
-                        BatteryColor,
-                        "Battery",
-                        master and UIValue("esp_batteries", true)
-                    )
-                elseif item:FindFirstChild("HumanoidRootPart") and #item:GetChildren() == 5 then
-                    AddOrUpdateStaticESP(
-                        item.PrimaryPart or item,
-                        "Minion",
-                        MinionColor,
-                        "Minion",
-                        master and UIValue("esp_minions", true)
-                    )
+                if CategoryName == "Generator" then
+                    Tracker.Drawings.Square.Visible = false
+
+                    if not Tracker.Drawings["Progress"] then
+                        local ProgressFunction = function()
+                            local genModel = Instance.Parent
+                            if not genModel then
+                                return ""
+                            end
+
+                            local progress = genModel:GetAttribute("Progress") or 0
+                            return string.format("Progress: %d%%", progress)
+                        end
+
+                        Tracker:AddText("Progress", Color3.fromRGB(120, 255, 120), "Progress: 0%", ProgressFunction)
+                    end
+
+                    if Tracker.Drawings["Progress"] then
+                        Tracker.Drawings["Progress"].Drawing.Color = Color3.fromRGB(120, 255, 120)
+                        Tracker.Drawings["Progress"].Visible = true
+                    end
                 end
             end
-        end)
+        end
 
         task.wait(2.5)
     end
