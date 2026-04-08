@@ -14,6 +14,7 @@ local KillerColor = Color3.fromRGB(255, 150, 150)
 
 local CompletedGenerators = {}
 local GeneratorTrackers = {}
+local GeneratorBoundsParts = {}
 local StaticTrackers = {
     Killer = {},
     Trap = {},
@@ -51,36 +52,26 @@ local function SetTrackerVisible(tracker, visible)
     end
 end
 
-local function HideGeneratorTracker(tracker)
-    if not tracker or not tracker.Drawings then
-        return
+local function DestroyBoundsPart(generatorModel)
+    local part = GeneratorBoundsParts[generatorModel]
+    if part then
+        pcall(function()
+            part:Destroy()
+        end)
+        GeneratorBoundsParts[generatorModel] = nil
+    end
+end
+
+local function RemoveGeneratorTracker(generatorModel)
+    local tracker = GeneratorTrackers[generatorModel]
+    if tracker then
+        pcall(function()
+            tracker:Destroy()
+        end)
+        GeneratorTrackers[generatorModel] = nil
     end
 
-    local square = tracker.Drawings.Square
-    if square and square.Drawing then
-        square.Visible = false
-        square.Drawing.Visible = false
-    end
-
-    local distance = tracker.Drawings.Distance
-    if distance and distance.Drawing then
-        distance.Visible = false
-        distance.Drawing.Visible = false
-    end
-
-    local name = tracker.Drawings.Name
-    if name and name.Drawing then
-        name.Visible = false
-        name.Drawing.Visible = false
-        name.Drawing.Text = ""
-    end
-
-    local progress = tracker.Drawings.Progress
-    if progress and progress.Drawing then
-        progress.Visible = false
-        progress.Drawing.Visible = false
-        progress.Drawing.Text = ""
-    end
+    DestroyBoundsPart(generatorModel)
 end
 
 local function ResetRoundIfNeeded()
@@ -90,7 +81,10 @@ local function ResetRoundIfNeeded()
     if gameMap ~= CurrentMapRef then
         CurrentMapRef = gameMap
         CompletedGenerators = {}
-        GeneratorTrackers = {}
+
+        for generatorModel in pairs(GeneratorTrackers) do
+            RemoveGeneratorTracker(generatorModel)
+        end
     end
 end
 
@@ -101,6 +95,35 @@ local function IsGeneratorComplete(generatorModel)
 
     local progress = generatorModel:GetAttribute("Progress") or 0
     return progress >= 100
+end
+
+local function GetOrCreateGeneratorBoundsPart(generatorModel)
+    if not generatorModel or not generatorModel.Parent then
+        return nil
+    end
+
+    local boundPart = GeneratorBoundsParts[generatorModel]
+    if boundPart and boundPart.Parent then
+        local cf, size = generatorModel:GetBoundingBox()
+        boundPart.CFrame = cf
+        boundPart.Size = size + Vector3.new(1.6, 1.6, 1.6)
+        return boundPart
+    end
+
+    local cf, size = generatorModel:GetBoundingBox()
+    boundPart = Instance.new("Part")
+    boundPart.Name = "__GeneratorBounds"
+    boundPart.Anchored = true
+    boundPart.CanCollide = false
+    boundPart.CanTouch = false
+    boundPart.CanQuery = false
+    boundPart.Transparency = 1
+    boundPart.Size = size + Vector3.new(1.6, 1.6, 1.6)
+    boundPart.CFrame = cf
+    boundPart.Parent = Workspace
+
+    GeneratorBoundsParts[generatorModel] = boundPart
+    return boundPart
 end
 
 local function ApplyGeneratorStyle(tracker)
@@ -143,22 +166,18 @@ local function ApplyGeneratorStyle(tracker)
         progress.Drawing.Center = true
         progress.Drawing.Outline = true
         progress.Drawing.Size = 13
-        progress.Drawing.Position = progress.Drawing.Position + Vector2.new(0, -14)
     end
 end
 
 local function EnsureGeneratorESP(generatorModel)
     if not generatorModel or not generatorModel.Parent then
+        RemoveGeneratorTracker(generatorModel)
         return
     end
 
-    local tracker = GeneratorTrackers[generatorModel]
-
     if IsGeneratorComplete(generatorModel) then
-        if tracker then
-            HideGeneratorTracker(tracker)
-        end
         CompletedGenerators[generatorModel] = true
+        RemoveGeneratorTracker(generatorModel)
         return
     end
 
@@ -166,14 +185,16 @@ local function EnsureGeneratorESP(generatorModel)
         CompletedGenerators[generatorModel] = nil
     end
 
-    local part = generatorModel.PrimaryPart
-    if not part or not part.Parent or not part.Address then
+    local boundsPart = GetOrCreateGeneratorBoundsPart(generatorModel)
+    if not boundsPart or not boundsPart.Parent or not boundsPart.Address then
+        RemoveGeneratorTracker(generatorModel)
         return
     end
 
+    local tracker = GeneratorTrackers[generatorModel]
     if not tracker then
         local ok, newTracker = pcall(function()
-            return ESP_Utility.NewTracker(part, "", GeneratorColor)
+            return ESP_Utility.NewTracker(boundsPart, "", GeneratorColor)
         end)
 
         if not ok or not newTracker then
@@ -186,14 +207,13 @@ local function EnsureGeneratorESP(generatorModel)
         if not tracker.Drawings.Progress then
             tracker:AddText("Progress", GeneratorColor, "Generator [0%]", function()
                 if not generatorModel or not generatorModel.Parent then
+                    RemoveGeneratorTracker(generatorModel)
                     return ""
                 end
 
                 if IsGeneratorComplete(generatorModel) then
-                    local existing = GeneratorTrackers[generatorModel]
-                    if existing then
-                        HideGeneratorTracker(existing)
-                    end
+                    CompletedGenerators[generatorModel] = true
+                    RemoveGeneratorTracker(generatorModel)
                     return ""
                 end
 
@@ -226,8 +246,8 @@ local function UpdateGenerators()
     end
 
     if not (UIValue("esp_master", true) and UIValue("esp_generators", true)) then
-        for _, tracker in pairs(GeneratorTrackers) do
-            HideGeneratorTracker(tracker)
+        for generatorModel in pairs(GeneratorTrackers) do
+            RemoveGeneratorTracker(generatorModel)
         end
     end
 end
